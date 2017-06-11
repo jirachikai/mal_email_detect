@@ -10,14 +10,12 @@ import tensorflow as tf
 # Special vocabulary symbols - we always put them at the start.
 _PAD = "_PAD"
 _GO = "_GO"
-_EOS = "_EOS"
 _UNK = "_UNK"
-_START_VOCAB = [_PAD, _GO, _EOS, _UNK]
+_START_VOCAB = [_PAD, _GO, _UNK]
 
 PAD_ID = 0
 GO_ID = 1
-EOS_ID = 2
-UNK_ID = 3
+UNK_ID = 2
 
 
 def basic_tokenizer(email):
@@ -96,12 +94,15 @@ def email_to_token_ids(email, vocabulary, tokenizer=None):
 
 def data_to_token_ids(bucketed_data, vocabulary, tokenizer=None):
     new_bucketed_data = []
+    max_email_len = 0
     for bucket in bucketed_data:
         new_bucket = []
         for (email, tag) in bucket:
             new_bucket.append((email_to_token_ids(email, vocabulary), tag))
+            if len(email) > max_email_len:
+                max_email_len = len(email)
         new_bucketed_data.append(new_bucket)
-    return new_bucketed_data
+    return new_bucketed_data, max_email_len
 
 
 def read_bukcketed_data_raw(fp, buckets, max_size=None):
@@ -128,8 +129,8 @@ def read_bucketed_data(fp, buckets, vocabulary_path, max_size=None):
     bucketed_data_raw = read_bukcketed_data_raw(fp, buckets)
     create_vocabulary(vocabulary_path, bucketed_data_raw)
     vocab, rev_vocab = initialize_vocabulary(vocabulary_path)
-    new_bucketed_data = data_to_token_ids(bucketed_data_raw, vocab)
-    return new_bucketed_data
+    new_bucketed_data, max_email_len = data_to_token_ids(bucketed_data_raw, vocab)
+    return new_bucketed_data, len(vocab), max_email_len
 
 if __name__ == '__main__':
     def test_read_data():

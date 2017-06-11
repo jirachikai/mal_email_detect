@@ -70,26 +70,24 @@ class Seq2SeqModel(object):
             cell = tf.contrib.rnn.MultiRNNCell(
                 [single_cell() for _ in range(num_layers)])
 
-        if use_att == True:
-            # The seq2seq function: we use embedding for the input and attention.
-            seq_model = def seq2seq_att(encoder_inputs, decoder_inputs, do_decode):
+        def seq_model(encoder_inputs, decoder_inputs, do_decode):
+            return tf.contrib.legacy_seq2seq.embedding_rnn_seq2seq(
+                encoder_inputs,
+                decoder_inputs,
+                cell,
+                num_encoder_symbols=input_size,
+                num_decoder_symbols=tag_size,
+                embedding_size=size,
+                feed_previous=do_decode,
+                dtype=dtype)
+        if use_att:
+            def seq_model(encoder_inputs, decoder_inputs, do_decode):
                 return tf.contrib.legacy_seq2seq.embedding_attention_seq2seq(
                     encoder_inputs,
                     decoder_inputs,
                     cell,
-                    num_encoder_symbols=source_vocab_size,
-                    num_decoder_symbols=target_vocab_size,
-                    embedding_size=size,
-                    feed_previous=do_decode,
-                    dtype=dtype)
-        else:
-            seq_model = def seq2seq(encoder_inputs, decoder_inputs, do_decode):
-                return tf.contrib.legacy_seq2seq.embedding_rnn_seq2seq(
-                    encoder_inputs,
-                    decoder_inputs,
-                    cell,
-                    num_encoder_symbols=source_vocab_size,
-                    num_decoder_symbols=target_vocab_size,
+                    num_encoder_symbols=input_size,
+                    num_decoder_symbols=tag_size,
                     embedding_size=size,
                     feed_previous=do_decode,
                     dtype=dtype)
@@ -99,30 +97,24 @@ class Seq2SeqModel(object):
         self.tag = []
         self.target_weight = []
 
-        for i in xrange(buckets[0][-1]):  # Last bucket is the biggest one.
+        for i in xrange(buckets[-1][0]):  # Last bucket is the biggest one.
             self.inputs.append(tf.placeholder(tf.int32, shape=[None],
                                               name="input{0}".format(i)))
+
         self.tag.append(tf.placeholder(tf.int32, shape=[None], name='tag'))
         self.target_weight.append(tf.placeholder(
             dtype, shape=[None], name="target_weigt"))
-        # for i in xrange(buckets[-1][1] + 1):
-        #   self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
-        #                                             name="decoder{0}".format(i)))
         target = [self.tag[0]]
 
         # Training outputs and losses.
         if forward_only:
             self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
                 self.inputs, self.tag, target,
-                self.target_weight, buckets, lambda x, y: seq_model(
-                    x, y, True),
-                softmax_loss_function=softmax_loss_function)
+                self.target_weight, buckets, lambda x, y: seq_model(x, y, True))
         else:
             self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
                 self.inputs, self.tag, target,
-                self.target_weight, buckets,
-                lambda x, y: seq_model(x, y, False),
-                softmax_loss_function=softmax_loss_function)
+                self.target_weight, buckets, lambda x, y: seq_model(x, y, False))
 
         # Gradients and SGD update operation for training the model.
         params = tf.trainable_variables()
