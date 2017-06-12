@@ -116,7 +116,8 @@ def read_bukcketed_data_raw(fp, buckets, max_size=None):
             if counter % 100000 == 0:
                 print("  reading data line %d" % counter)
                 sys.stdout.flush()
-            email, tag = ins.split('\x07')
+            # email, tag = ins.split('\x07')
+            email, tag = ins.split()
             # need to change email to vector
             for bucket_id, (email_size, _) in enumerate(buckets):
                 if len(email) < email_size:

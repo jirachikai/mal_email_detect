@@ -33,46 +33,34 @@ class LM(object):
             float(model_config.learning_rate), trainable=False, dtype=tf.float32)
         self.learning_rate_decay_op = self.learning_rate.assign(
             self.learning_rate * model_config.learning_rate_decay_factor)
-        self.keep_probability = tf.placeholder(tf.float32, name="keep_probability")
 
-        self.input = tf.placeholder(tf.int64, shape=(model_config.batch_size, 
-            model_config.time_steps), name="input")
-        self.y = tf.placeholder(tf.int64, shape=(model_config.batch_size, 
-            1), name="y")
-        self.init = tf.placeholder(tf.float32, shape=(), name="init") # init parameter 
+        self.x = tf.placeholder(tf.int32, [None, model_config.time_steps], name = "x")
+        self.y = tf.placeholder(tf.float32, [None, model_config.n_classes], name = "y")
 
         self.embedding = tf.Variable(tf.random_uniform(
             (model_config.vocabulary_size, model_config.hidden_units), 
-            -self.init, self.init), dtype=tf.float32, name="embedding")
+            -model_config.init, model_config.init), dtype=tf.float32, name="embedding")
         self.embedded_input = tf.nn.embedding_lookup(self.embedding, 
-            self.input, name="embedded_input")
+            self.x, name="embedded_input")
 
         cell = tf.contrib.rnn.BasicLSTMCell(model_config.hidden_units)
-        cell = tf.contrib.rnn.DropoutWrapper(cell, output_keep_prob=self.keep_probability)
+        cell = tf.contrib.rnn.DropoutWrapper(cell, output_keep_prob=model_config.keep_probability)
         rnn_layers = cell
         if model_config.num_layers > 1:
             rnn_layers = tf.contrib.rnn.MultiRNNCell([cell for _ in range(model_config.num_layers)])
 
         self.reset_state = rnn_layers.zero_state(model_config.batch_size, dtype=tf.float32)
-        # print(self.reset_state)
-        # self.state = tf.placeholder(tf.float32, self.reset_state.state_size, "h_state")
-        # query = tf.concat(1,[state[0], state[1]])
-        # self.sequence_length = tf.placeholder(tf.int64, ())
-        self.outputs, self.next_state = tf.nn.dynamic_rnn(rnn_layers, self.embedded_input, 
+        self.outputs, self.state = tf.nn.dynamic_rnn(rnn_layers, self.embedded_input, 
             time_major=False, initial_state = self.reset_state)
-
-        # Concatenate all the batches into a single row.
-        # self.flattened_outputs = tf.reshape(tf.concat(1, self.outputs), (-1, hidden_units),
-        #                                     name="flattened_outputs")
         self.last_states = tf.unstack(tf.transpose(self.outputs, perm = [1,0,2]))[-1]
 
         # Project the outputs onto the vocabulary.
-        self.w = tf.get_variable("w", (self.hidden_units, 1))
-        self.b = tf.get_variable("b", 1)
-        self.pred = tf.matmul(self.last_states, self.w) + self.b
+        self.W = tf.get_variable("w", (model_config.hidden_units, model_config.n_classes))
+        self.b = tf.get_variable("b", model_config.n_classes)
+        self.pred = tf.matmul(self.last_states, self.W) + self.b
 
         # Compare predictions to labels.
-        self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits = self.pred, labels = self.y))
+        self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits = pred, labels = y))
 
         self.validation_perplexity = tf.Variable(dtype=tf.float32, initial_value=float("inf"), trainable=False,
                                                     name="validation_perplexity")
@@ -90,27 +78,14 @@ class LM(object):
 
         self.initialize = tf.initialize_all_variables()
         self.summary = tf.summary.merge_all()
+        self.model_config = model_config
 
-    def step(self, session, inputs, tags, forward_only):
-        X = tf.reshape(inputs, [-1, n_inputs])
-        input_feed = {}
-        for l in xrange(input_size):
-            input_feed[self.inputs[l].name] = inputs[l]
-        for l in xrange(tag_size):
-            input_feed[self.tag[l].name] = tags[l]
-            input_feed[self.target_weight[l].name] = target_weights[l]
-
-        # Output feed: depends on whether we do a backward step or not.
-        if not forward_only:
-            output_feed = [self.updates[bucket_id],  # Update Op that does SGD.
-                           self.gradient_norms[bucket_id],  # Gradient norm.
-                           self.losses[bucket_id]]  # Loss for this batch.
-        else:
-            output_feed = [self.losses[bucket_id]]  # Loss for this batch.
-            for l in xrange(tag_size):  # Output logits.
-                output_feed.append(self.outputs[bucket_id][l])
-
-        outputs = session.run(output_feed, input_feed)
+    def step(self, session, batch_x, batch_y, forward_only = False):
+        batch_x = batch_xs.reshape([self.model_config.batch_size, self.model_config.time_steps])
+        outputs = sess.run([train_op], feed_dict={
+        x: batch_xs,
+        y: batch_ys
+        })
 
         if not forward_only:
             # Gradient norm, loss, no outputs.
@@ -119,49 +94,37 @@ class LM(object):
             # No gradient norm, loss, outputs.
             return None, outputs[0], outputs[1:]
 
-    def train(self, session, init, training_set, parameters, exit_criteria, validation, logging_interval, directories):
-        epoch = 1
-        iteration = 0
-        state = None
+    def train(self, session, training_set, validation, max_iterations, log_per_steps, directories):
         summary = self.summary_writer(directories.summary, session)
-        session.run(self.initialize, feed_dict={self.init: init})
-        try:
-            # Enumerate over the training set until exit criteria are met.
-            while True:
-                epoch_cost = epoch_iteration = 0
-                # Enumerate over a single epoch of the training set.
-                for start_document, context, target, complete in training_set.epoch(self.time_steps, self.batch_size):
-                    if start_document:
-                        state = session.run(self.reset_state)
-                    _, cost, state, iteration = session.run(
-                        [self.train_step, self.cost, self.next_state, self.iteration],
-                        feed_dict={
-                            self.input: context,
-                            self.y: y,
-                            self.state: state,
-                            self.learning_rate: parameters.learning_rate,
-                            self.keep_probability: parameters.keep_probability
-                        })
-                    epoch_cost += cost
-                    epoch_iteration += self.time_steps
-                    if self._interval(iteration, logging_interval):
-                        logger.info("Epoch %d (%0.4f complete), Iteration %d: epoch training perplexity %0.4f" %
-                                    (epoch, complete, iteration, self.perplexity(epoch_cost, epoch_iteration)))
-                    if validation is not None and self._interval(iteration, validation.interval):
-                        validation_perplexity = self.test(session, validation.validation_set)
-                        self.store_validation_perplexity(session, summary, iteration, validation_perplexity)
-                        logger.info("Epoch %d, Iteration %d: validation perplexity %0.4f" %
-                                    (epoch, iteration, validation_perplexity))
-                    if exit_criteria.max_iterations is not None and iteration > exit_criteria.max_iterations:
-                        raise StopTrainingException()
+        session.run(self.initialize)
+        iteration = 0
+        epoch = 0
+        epoch_loss = 0.0
 
-                self.store_training_epoch_perplexity(session, summary, iteration,
-                                                     self.perplexity(epoch_cost, epoch_iteration))
-                epoch += 1
-                if exit_criteria.max_epochs is not None and epoch > exit_criteria.max_epochs:
-                    raise StopTrainingException()
-        except (StopTrainingException, KeyboardInterrupt):
-            pass
+        # Enumerate over the training set until exit criteria are met.
+        while True:
+            batch_x, batch_y = self.get_batch(training_set)
+            _, loss, _ = self.step(session, batch_x, batch_y, False)
+            epoch_loss += loss
+
+            # Enumerate over a single epoch of the training set.
+            if not iteration%log_per_steps:
+                epoch += 1 
+                logger.info("Epoch %d, Iteration %d: epoch loss %0.4f" % (epoch, iteration, epoch_loss))
+                epoch_loss = 0.0
+            if validation is not None and not iteration%log_per_steps:
+                validation_perplexity, validation_loss = self.test(session, validation.validation_set)
+                self.store_validation_perplexity(session, summary, iteration, validation_perplexity)
+                logger.info("Epoch %d, Iteration %d: validation perplexity %0.4f, validation loss" %
+                            (epoch, iteration, validation_perplexity, validation_loss))
+
+            self.store_training_epoch_perplexity(session, summary, iteration,
+                                                    self.perplexity(epoch_cost, epoch_iteration))
+
+            if iterations > max_iterations:
+                break
+            iteration += 1
+
         logger.info("Stop training at epoch %d, iteration %d" % (epoch, iteration))
         summary.close()
         if directories.model is not None:
@@ -169,6 +132,24 @@ class LM(object):
             tf.train.Saver().save(session, model_filename)
             self._write_model_parameters(directories.model)
             logger.info("Saved model in %s " % directories.model)
+
+    def get_batch(self, data):
+        batch_data = []
+        batch_tags = []
+
+        # Get a random batch of inputs from data,
+        # pad them if needed
+        for _ in range(self.model_config.batch_size):
+            input_vec, tag = random.choice(data)
+
+            # Input are padded then.
+            input_vec_pad_size = self.time_steps - len(input_vec)
+            batch_data.append(input_vec + [PAD_ID] * input_vec_pad_size)
+            if int(tag) == 1:
+                batch_tags.append([0,1])
+            else:
+                batch_tags.append([1,0])
+        return np.array(batch_data), np.array(batch_tags)
 
     def _write_model_parameters(self, model_directory):
         parameters = {
@@ -216,10 +197,6 @@ class LM(object):
         return self.embedding.get_shape()[1].value
 
     @staticmethod
-    def _interval(iteration, interval):
-        return interval is not None and iteration > 1 and iteration % interval == 0
-
-    @staticmethod
     def perplexity(cost, iterations):
         return np.exp(cost / iterations)
 
@@ -264,6 +241,7 @@ class Model_Conifg(object):
     batch_size,
     time_steps,
     vocabulary_size,
+    n_classes,
     hidden_units,
     num_layers,
     max_gradient,
@@ -285,6 +263,7 @@ class Model_Conifg(object):
         self.batch_size = batch_size
         self.time_steps =  time_steps
         self.vocabulary_size = vocabulary_size
+        self.n_classes = n_classes
         self.hidden_units = hidden_units
         self.num_layers = num_layers
         self.learning_rate_decay_factor = learning_rate_decay_factor
