@@ -18,7 +18,8 @@ def create_model(session, voc_len, max_email_len, forward_only = False):
         time_steps = max_email_len,
         vocabulary_size = voc_len,
         hidden_units = 80,
-        num_layers = 1
+        num_layers = 1,
+        max_gradient = 10
     )
     model = LM(mc)
     session.run(model.initialize, feed_dict={model.init: mc.init})
@@ -33,7 +34,7 @@ def create_model(session, voc_len, max_email_len, forward_only = False):
     return model
 
 
-def train(new_bucketed_data, ):
+def train(new_bucketed_data, Model):
     model_directory = ""
     # validation =  Validation(args.validation_interval, args.data_set[args.validation_partition])
 
@@ -46,6 +47,7 @@ def train(new_bucketed_data, ):
             vocabulary_size = voc_len,
             hidden_units = 80,
             num_layers = 1,
+            max_gradient = 10
         )
         model = LM(max_gradient, batch_size, time_steps, len(args.data_set.vocabulary),
                     args.hidden_units, args.layers)
@@ -65,5 +67,5 @@ new_bucketed_data, voc_len, max_email_len = dataload()
 print("voc_len: %d",(voc_len))
 print("max_email_len: %d",(max_email_len))
 with tf.Session() as session:
-    create_model(session, voc_len, max_email_len)
+    model = create_model(session, voc_len, max_email_len)
 # create_model(voc_len, max_email_len)

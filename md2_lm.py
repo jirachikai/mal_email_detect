@@ -37,8 +37,8 @@ class LM(object):
 
         self.input = tf.placeholder(tf.int64, shape=(model_config.batch_size, 
             model_config.time_steps), name="input")
-        self.targets = tf.placeholder(tf.int64, shape=(model_config.batch_size, 
-            model_config.time_steps), name="targets")
+        self.y = tf.placeholder(tf.int64, shape=(model_config.batch_size, 
+            1), name="y")
         self.init = tf.placeholder(tf.float32, shape=(), name="init") # init parameter 
 
         self.embedding = tf.Variable(tf.random_uniform(
@@ -58,36 +58,66 @@ class LM(object):
         # self.state = tf.placeholder(tf.float32, self.reset_state.state_size, "h_state")
         # query = tf.concat(1,[state[0], state[1]])
         # self.sequence_length = tf.placeholder(tf.int64, ())
-        self.outputs, self.next_state = tf.nn.dynamic_rnn(rnn_layers, self.embedded_input, time_major=True,
-                                                            initial_state=self.reset_state)
+        self.outputs, self.next_state = tf.nn.dynamic_rnn(rnn_layers, self.embedded_input, 
+            time_major=False, initial_state = self.reset_state)
 
         # Concatenate all the batches into a single row.
-        self.flattened_outputs = tf.reshape(tf.concat(1, self.outputs), (-1, hidden_units),
-                                            name="flattened_outputs")
+        # self.flattened_outputs = tf.reshape(tf.concat(1, self.outputs), (-1, hidden_units),
+        #                                     name="flattened_outputs")
+        self.last_states = tf.unstack(tf.transpose(self.outputs, perm = [1,0,2]))[-1]
+
         # Project the outputs onto the vocabulary.
-        self.w = tf.get_variable("w", (hidden_units, 1))
+        self.w = tf.get_variable("w", (self.hidden_units, 1))
         self.b = tf.get_variable("b", 1)
-        self.predicted = tf.matmul(self.flattened_outputs, self.w) + self.b
+        self.pred = tf.matmul(self.last_states, self.w) + self.b
+
         # Compare predictions to labels.
-        self.loss = tf.nn.seq2seq.sequence_loss_by_example([self.predicted], [tf.concat(-1, self.targets)],
-                [tf.ones(model_config.batch_size * model_config.time_steps)])
-        self.cost = tf.div(tf.reduce_sum(self.loss), model_config.batch_size, name="cost")
+        self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits = self.pred, labels = self.y))
 
         self.validation_perplexity = tf.Variable(dtype=tf.float32, initial_value=float("inf"), trainable=False,
                                                     name="validation_perplexity")
-        tf.scalar_summary(self.validation_perplexity.op.name, self.validation_perplexity)
+        tf.summary.scalar(self.validation_perplexity.op.name, self.validation_perplexity)
         self.training_epoch_perplexity = tf.Variable(dtype=tf.float32, initial_value=float("inf"), trainable=False,
                                                         name="training_epoch_perplexity")
-        tf.scalar_summary(self.training_epoch_perplexity.op.name, self.training_epoch_perplexity)
+        tf.summary.scalar(self.training_epoch_perplexity.op.name, self.training_epoch_perplexity)
+
         self.iteration = tf.Variable(0, dtype=tf.int64, name="iteration", trainable=False)
         self.gradients, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tf.trainable_variables()),
-                                                    max_gradient, name="clip_gradients")
+                            model_config. max_gradient, name="clip_gradients")
         optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.learning_rate)
         self.train_step = optimizer.apply_gradients(zip(self.gradients, tf.trainable_variables()),
                                                     name="train_step", global_step=self.iteration)
 
         self.initialize = tf.initialize_all_variables()
-        self.summary = tf.merge_all_summaries()
+        self.summary = tf.summary.merge_all()
+
+    def step(self, session, inputs, tags, forward_only):
+        X = tf.reshape(inputs, [-1, n_inputs])
+        input_feed = {}
+        for l in xrange(input_size):
+            input_feed[self.inputs[l].name] = inputs[l]
+        for l in xrange(tag_size):
+            input_feed[self.tag[l].name] = tags[l]
+            input_feed[self.target_weight[l].name] = target_weights[l]
+
+        # Output feed: depends on whether we do a backward step or not.
+        if not forward_only:
+            output_feed = [self.updates[bucket_id],  # Update Op that does SGD.
+                           self.gradient_norms[bucket_id],  # Gradient norm.
+                           self.losses[bucket_id]]  # Loss for this batch.
+        else:
+            output_feed = [self.losses[bucket_id]]  # Loss for this batch.
+            for l in xrange(tag_size):  # Output logits.
+                output_feed.append(self.outputs[bucket_id][l])
+
+        outputs = session.run(output_feed, input_feed)
+
+        if not forward_only:
+            # Gradient norm, loss, no outputs.
+            return outputs[1], outputs[2], None
+        else:
+            # No gradient norm, loss, outputs.
+            return None, outputs[0], outputs[1:]
 
     def train(self, session, init, training_set, parameters, exit_criteria, validation, logging_interval, directories):
         epoch = 1
@@ -107,7 +137,7 @@ class LM(object):
                         [self.train_step, self.cost, self.next_state, self.iteration],
                         feed_dict={
                             self.input: context,
-                            self.targets: target,
+                            self.y: y,
                             self.state: state,
                             self.learning_rate: parameters.learning_rate,
                             self.keep_probability: parameters.keep_probability
@@ -236,6 +266,7 @@ class Model_Conifg(object):
     vocabulary_size,
     hidden_units,
     num_layers,
+    max_gradient,
     init = 0.1,
     model = None,
     summary = None,
@@ -257,6 +288,7 @@ class Model_Conifg(object):
         self.hidden_units = hidden_units
         self.num_layers = num_layers
         self.learning_rate_decay_factor = learning_rate_decay_factor
+        self.max_gradient = max_gradient
 
         # Model Setting:
 

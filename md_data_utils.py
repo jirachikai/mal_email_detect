@@ -6,16 +6,17 @@ import os
 
 from tensorflow.python.platform import gfile
 import tensorflow as tf
+import random
+import numpy as np
 
 # Special vocabulary symbols - we always put them at the start.
+
 _PAD = "_PAD"
-_GO = "_GO"
 _UNK = "_UNK"
-_START_VOCAB = [_PAD, _GO, _UNK]
+_START_VOCAB = [_PAD, _UNK]
 
 PAD_ID = 0
-GO_ID = 1
-UNK_ID = 2
+UNK_ID = 1
 
 
 def basic_tokenizer(email):
@@ -132,13 +133,33 @@ def read_bucketed_data(fp, buckets, vocabulary_path, max_size=None):
     new_bucketed_data, max_email_len = data_to_token_ids(bucketed_data_raw, vocab)
     return new_bucketed_data, len(vocab), max_email_len
 
+def get_batch(batch_size, bucketed_data, bucket_id, seq_max_len):
+    input_vecs = []
+    tags = []
+
+    # Get a random batch of inputs from data,
+    # pad them if needed
+    for _ in range(batch_size):
+        input_vec, tag = random.choice(bucketed_data[bucket_id])
+
+        # Input are padded then.
+        input_vec_pad_size = seq_max_len - len(input_vec)
+        input_vecs.append(input_vec + [PAD_ID] * input_vec_pad_size)
+        if int(tag) == 1:
+            tags.append([0,1])
+        else:
+            tags.append([1,0])
+    return np.array(input_vecs), np.array(tags)
+
+
 if __name__ == '__main__':
     def test_read_data():
         folder = 'email_data_test/'
-        buckets = [(5, 1), (10, 1), (50, 1)]
-        data = read_bucketed_data(
+        buckets = [(199, 1)]
+        new_bucketed_data, vocab_len, max_email_len = read_bucketed_data(
             folder + "test.csv", buckets, folder + "voc")
-        return str(data)
-    print(test_read_data())
-    # print(test_read_data())
+        batch_inputs, batch_tags = get_batch(10, new_bucketed_data, 0, max_email_len)
+        print(batch_inputs)
+        print(batch_tags)
+    test_read_data()
     print("finish!")
