@@ -1,0 +1,12 @@
+06-15 17:18 train        INFO     Save Model Parameters Successfully!
+06-15 17:18 train        INFO     Epoch 1, Iteration 5: epoch loss 0.0624, epoch accuracy 1.0000
+06-15 17:18 train        INFO     Epoch 2, Iteration 10: epoch loss 0.0061, epoch accuracy 1.0000
+06-15 17:18 train        INFO     Successfully create ckpt 1, at Epoch 2, Iteration 10: epoch loss 0.0061, epoch accuracy 1.0000
+06-15 17:18 train        INFO     Epoch 3, Iteration 15: epoch loss 0.0030, epoch accuracy 1.0000
+06-15 17:19 train        INFO     Epoch 4, Iteration 20: epoch loss 0.0020, epoch accuracy 1.0000
+06-15 17:19 train        INFO     Successfully create ckpt 2, at Epoch 4, Iteration 20: epoch loss 0.0020, epoch accuracy 1.0000
+06-15 17:19 train        INFO     Epoch 5, Iteration 25: epoch loss 0.0014, epoch accuracy 1.0000
+06-15 17:19 train        INFO     Epoch 6, Iteration 30: epoch loss 0.0012, epoch accuracy 1.0000
+06-15 17:19 train        INFO     Successfully create ckpt 3, at Epoch 6, Iteration 30: epoch loss 0.0012, epoch accuracy 1.0000
+06-15 17:19 train        INFO     Stop training at epoch 6, iteration 30
+06-15 17:19 train        INFO     Saved model in email_data_test/ 

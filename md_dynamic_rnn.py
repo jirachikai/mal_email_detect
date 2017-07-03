@@ -3,8 +3,7 @@ import random
 import numpy as np
 import logging
 import os
-import json
-class LM(object):
+class dynamicLM(object):
     def __init__(self, model_config):
         self.learning_rate = tf.Variable(
             float(model_config.learning_rate), trainable=False, dtype=tf.float32)
@@ -13,6 +12,7 @@ class LM(object):
 
         self.x = tf.placeholder(tf.int32, [None, model_config.time_steps], name = "x")
         self.y = tf.placeholder(tf.float32, [None, model_config.n_classes], name = "y")
+        self.x_lengths = tf.placeholder(tf.int32, [model_config.batch_size], name = "x_lengths")
 
         self.embedding = tf.Variable(tf.random_uniform(
             (model_config.vocabulary_size, model_config.hidden_units), 
@@ -27,9 +27,10 @@ class LM(object):
             rnn_layers = tf.contrib.rnn.MultiRNNCell([cell for _ in range(model_config.num_layers)])
 
         self.reset_state = rnn_layers.zero_state(model_config.batch_size, dtype=tf.float32)
-        self.outputs, self.state = tf.nn.dynamic_rnn(rnn_layers, self.embedded_input, 
-            time_major=False, initial_state = self.reset_state)
-        self.last_states = tf.unstack(tf.transpose(self.outputs, perm = [1,0,2]))[-1]
+        self.outputs, self.last_states = tf.nn.dynamic_rnn(cell = rnn_layers, inputs = self.embedded_input, 
+            sequence_length = self.x_lengths, time_major=False, initial_state = self.reset_state)
+        # self.last_states = tf.unstack(tf.transpose(self.outputs, perm = [1,0,2]))[-1]
+        self.last_states = self.last_states[1] # 0 is cell, 1 is hidden
 
         # Project the outputs onto the vocabulary.
         self.W = tf.get_variable("w", (model_config.hidden_units, model_config.n_classes))
@@ -56,14 +57,14 @@ class LM(object):
 
         self.initialize = tf.initialize_all_variables()
         self.model_config = model_config
-        self.ckpt_num = 0
 
-    def step(self, session, batch_x, batch_y, forward_only = False):
+    def step(self, session, batch_x, batch_y, batch_x_lengths, forward_only = False):
         batch_x = batch_x.reshape([self.model_config.batch_size, self.model_config.time_steps])
         if forward_only: # predict
             _, batch_loss, batch_accuracy, pred = session.run(
                 [self.pred, self.train_step, self.cost, self.accuracy], 
                 feed_dict={
+                    self.x_lenghts: batch_x_lengths,
                     self.x: batch_x,
                     self.y: batch_y
                 })
@@ -72,52 +73,39 @@ class LM(object):
             _, batch_loss, batch_accuracy = session.run(
                 [self.train_step, self.cost, self.accuracy], 
                 feed_dict={
+                    self.x_lengths: batch_x_lengths,
                     self.x: batch_x,
                     self.y: batch_y
                 })
             return None, batch_loss, batch_accuracy
 
-    def train(self, session, training_set, validation, exit_criteria, batch_per_epoch, 
-            directories, ckpt_per_epoch, restore_env = None):
+    def train(self, session, training_set, validation, exit_criteria, batch_per_epoch, directories):
         logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
                     datefmt='%m-%d %H:%M',
                     filename=self._log_file(directories),
                     filemode='w')
         logger = logging.getLogger("train")
-        self._write_model_parameters(directories)
-        logger.info("Save Model Parameters Successfully!")
-        if restore_env == None:
-            session.run(self.initialize)
-            epoch = 0
-        else:
-            epoch = restore_env.epoch
-
+        session.run(self.initialize)
         iteration = 0
+        epoch = 0
         epoch_loss = 0.0
         epoch_accuracy = 0.0
 
         # epoch contains batch_per_epoch batches
         while True:
-            batch_x, batch_y = self.get_batch(training_set)
-            _, batch_loss, batch_accuracy = self.step(session, batch_x, batch_y, False)
+            batch_x, batch_y, batch_x_lengths = self.get_batch(training_set)
+            _, batch_loss, batch_accuracy = self.step(session, batch_x, 
+                batch_y, batch_x_lengths, False)
             epoch_loss += batch_loss
             epoch_accuracy += batch_accuracy
-            iteration += 1 
+
             if not iteration%batch_per_epoch:
                 epoch += 1 
                 epoch_accuracy /= float(batch_per_epoch)
                 epoch_loss /= float(batch_per_epoch)
                 logger.info("Epoch %d, Iteration %d: epoch loss %0.4f, epoch accuracy %0.4f"
                  % (epoch, iteration, epoch_loss, epoch_accuracy))
-                if epoch%ckpt_per_epoch == 0:
-                    ckpt_path = self._ckpt_file(directories)
-                    self.ckpt_num += 1
-                    print(ckpt_path)
-                    tf.train.Saver().save(session, ckpt_path)
-                    logger.info("Successfully create ckpt %d, at Epoch %d, Iteration %d: epoch loss %0.4f, epoch accuracy %0.4f"%
-                        (self.ckpt_num, epoch, iteration, epoch_loss, epoch_accuracy))
-
                 epoch_loss = 0.0
                 epoch_accuracy = 0.0
 
@@ -129,6 +117,7 @@ class LM(object):
 
             if iteration > exit_criteria.max_iterations or epoch > exit_criteria.max_epochs:
                 break
+            iteration += 1
 
         logger.info("Stop training at epoch %d, iteration %d" % (epoch, iteration))
         if (validation is not None):
@@ -138,20 +127,23 @@ class LM(object):
 
         model_filename = self._model_file(directories)
         tf.train.Saver().save(session, model_filename)
+        # self._write_model_parameters(directories)
         logger.info("Saved model in %s " % directories)
 
     @staticmethod
     def padding(data, times_steps, PAD_ID = 0):
         padded_xs = []
         ys = []
+        xs_length = []
         for x, y in data:
             pad_size = times_steps - len(x)
+            xs_length.append(len(x))
             padded_xs.append(x + [PAD_ID] * pad_size)
             if int(y) == 1:
                 ys.append([0,1])
             else:
                 ys.append([1,0])
-        return np.array(padded_xs), np.array(ys)
+        return np.array(padded_xs), np.array(ys), np.array(xs_length)
 
     def get_batch(self, data):
         batch_data = []
@@ -159,6 +151,7 @@ class LM(object):
         for _ in range(self.model_config.batch_size):
             batch_data.append(random.choice(data))
         # pad them if needed
+        # will return padded x, y and x origin length
         return self.padding(batch_data, self.model_config.time_steps)
     
     @classmethod
@@ -190,22 +183,8 @@ class LM(object):
     @staticmethod
     def _log_file(model_directory):
         return os.path.join(model_directory, "logging.log")
-
-    def _ckpt_file(self, model_directory):
-        model_directory = os.path.join(model_directory, "ckpt")
-        if not os.path.exists(model_directory):
-            os.makedirs(model_directory)
-        return os.path.join(model_directory, "ckpt"+str(self.ckpt_num))
   
     def _write_model_parameters(self, model_directory):
-        # parameters = {
-        #     "max_gradient": self.max_gradient,
-        #     "batch_size": self.batch_size,
-        #     "time_steps": self.time_steps,
-        #     "vocabulary_size": self.vocabulary_size,
-        #     "hidden_units": self.hidden_units,
-        #     "layers": self.layers
-        # }
         with open(self._parameters_file(model_directory), "w") as f:
             json.dump(self.model_config.__dict__, f, indent=4)
 
