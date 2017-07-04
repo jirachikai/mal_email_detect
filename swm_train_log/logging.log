@@ -1,0 +1,15 @@
+07-04 11:10 train        INFO     Save Model Parameters Successfully!
+07-04 11:10 train        INFO     Epoch 1, Iteration 0: epoch loss 0.0005, epoch accuracy 0.0010
+07-04 11:10 train        INFO     Epoch 1, Iteration 0: validation accuracy 0.5000, validation loss 1.8080
+07-04 11:25 train        INFO     Epoch 2, Iteration 1000: epoch loss 0.0080, epoch accuracy 0.9990
+07-04 11:25 train        INFO     Epoch 2, Iteration 1000: validation accuracy 0.5000, validation loss 3.4597
+07-04 11:39 train        INFO     Epoch 3, Iteration 2000: epoch loss 0.0079, epoch accuracy 0.9990
+07-04 11:39 train        INFO     Epoch 3, Iteration 2000: validation accuracy 0.5000, validation loss 3.4524
+07-04 11:54 train        INFO     Epoch 4, Iteration 3000: epoch loss 0.0079, epoch accuracy 0.9990
+07-04 11:55 train        INFO     Epoch 4, Iteration 3000: validation accuracy 0.5000, validation loss 3.4463
+07-04 12:10 train        INFO     Epoch 5, Iteration 4000: epoch loss 0.0079, epoch accuracy 0.9990
+07-04 12:10 train        INFO     Epoch 5, Iteration 4000: validation accuracy 0.5000, validation loss 3.4469
+07-04 12:25 train        INFO     Epoch 6, Iteration 5000: epoch loss 0.0079, epoch accuracy 0.9990
+07-04 12:26 train        INFO     Epoch 6, Iteration 5000: validation accuracy 0.5000, validation loss 3.4457
+07-04 12:40 train        INFO     Epoch 7, Iteration 6000: epoch loss 0.0079, epoch accuracy 0.9990
+07-04 12:40 train        INFO     Epoch 7, Iteration 6000: validation accuracy 0.5000, validation loss 3.4431

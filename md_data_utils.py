@@ -8,7 +8,7 @@ from tensorflow.python.platform import gfile
 import tensorflow as tf
 import random
 import numpy as np
-
+import sys
 # Special vocabulary symbols - we always put them at the start.
 
 _PAD = "_PAD"
@@ -24,7 +24,7 @@ def basic_tokenizer(email):
     return list(email)
 
 
-def create_vocabulary(vocabulary_path, bucketed_data, tokenizer=None):
+def create_vocabulary(vocabulary_path, dataset, tokenizer=None):
     """Create vocabulary file (if it does not exist yet) from data file.
 
     Args:
@@ -36,24 +36,23 @@ def create_vocabulary(vocabulary_path, bucketed_data, tokenizer=None):
     print("Creating vocabulary %s" % (vocabulary_path))
     vocab = {}
     counter = 0
-    for bucket in bucketed_data:
-        for (email, _) in bucket:
-            counter += 1
-            if counter % 100000 == 0:
-                print("  processing line %d" % counter)
-            tokens = tokenizer(
-                email) if tokenizer else basic_tokenizer(email)
-            for w in tokens:
-                if w in vocab:
-                    vocab[w] += 1
-                else:
-                    vocab[w] = 1
+
+    for (email, _) in dataset:
+        counter += 1
+        if counter % 100000 == 0:
+            print("  processing line %d" % counter)
+        tokens = tokenizer(
+            email) if tokenizer else basic_tokenizer(email)
+        for w in tokens:
+            if w in vocab:
+                vocab[w] += 1
+            else:
+                vocab[w] = 1
     vocab_list = _START_VOCAB + \
                 sorted(vocab, key=vocab.get, reverse=True)
     with open(vocabulary_path, mode="w") as vocab_file:
         for w in vocab_list:
             vocab_file.write(w + "\n")
-
 
 def initialize_vocabulary(vocabulary_path):
     """Initialize vocabulary from file.
@@ -93,21 +92,18 @@ def email_to_token_ids(email, vocabulary, tokenizer=None):
         words = basic_tokenizer(email)
     return [vocabulary.get(str.encode(w), UNK_ID) for w in words]
 
-def data_to_token_ids(bucketed_data, vocabulary, tokenizer=None):
-    new_bucketed_data = []
+def data_to_token_ids(data_raw, vocabulary, tokenizer=None):
     max_email_len = 0
-    for bucket in bucketed_data:
-        new_bucket = []
-        for (email, tag) in bucket:
-            new_bucket.append((email_to_token_ids(email, vocabulary), tag))
-            if len(email) > max_email_len:
-                max_email_len = len(email)
-        new_bucketed_data.append(new_bucket)
-    return new_bucketed_data, max_email_len
+    new_data = []
+    for (email, tag) in data_raw:
+        tokens = email_to_token_ids(email, vocabulary)
+        new_data.append((tokens, tag))
+        if len(tokens) > max_email_len:
+            max_email_len = len(tokens)
+    return new_data, max_email_len
 
-
-def read_bukcketed_data_raw(fp, buckets, max_size=None):
-    data_set = [[] for _ in buckets]
+def read_data_raw(fp, max_size=None):
+    dataset = []
     with open(fp, "r") as data:
         ins = data.readline().strip()
         counter = 0
@@ -116,42 +112,20 @@ def read_bukcketed_data_raw(fp, buckets, max_size=None):
             if counter % 100000 == 0:
                 print("  reading data line %d" % counter)
                 sys.stdout.flush()
-            # email, tag = ins.split('\x07')
+            if not ins:
+                continue
             email, tag = ins.split()
-            # need to change email to vector
-            for bucket_id, (email_size, _) in enumerate(buckets):
-                if len(email) < email_size:
-                    data_set[bucket_id].append((email, tag))
-                    break
+            dataset.append((email, tag))
             ins = data.readline().strip()
-    return data_set
+    return dataset
 
-
-def read_bucketed_data(fp, buckets, vocabulary_path, max_size=None):
-    bucketed_data_raw = read_bukcketed_data_raw(fp, buckets)
-    create_vocabulary(vocabulary_path, bucketed_data_raw)
+def read_data(fp, vocabulary_path, create_voc = True, max_size=None):
+    data_raw = read_data_raw(fp, max_size)
+    if create_voc:
+        create_vocabulary(vocabulary_path, data_raw)
     vocab, rev_vocab = initialize_vocabulary(vocabulary_path)
-    new_bucketed_data, max_email_len = data_to_token_ids(bucketed_data_raw, vocab)
-    return new_bucketed_data, len(vocab), max_email_len
-
-def get_batch(batch_size, bucketed_data, bucket_id, seq_max_len):
-    input_vecs = []
-    tags = []
-
-    # Get a random batch of inputs from data,
-    # pad them if needed
-    for _ in range(batch_size):
-        input_vec, tag = random.choice(bucketed_data[bucket_id])
-
-        # Input are padded then.
-        input_vec_pad_size = seq_max_len - len(input_vec)
-        input_vecs.append(input_vec + [PAD_ID] * input_vec_pad_size)
-        if int(tag) == 1:
-            tags.append([0,1])
-        else:
-            tags.append([1,0])
-    return np.array(input_vecs), np.array(tags)
-
+    new_data, max_email_len = data_to_token_ids(data_raw, vocab)
+    return new_data, len(vocab), max_email_len
 
 if __name__ == '__main__':
     def test_read_data():

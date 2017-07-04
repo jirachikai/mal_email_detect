@@ -94,6 +94,7 @@ class LM(object):
             epoch = restore_env.epoch
 
         iteration = 0
+        epoch = 0
         epoch_loss = 0.0
         epoch_accuracy = 0.0
 

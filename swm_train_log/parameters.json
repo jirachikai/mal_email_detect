@@ -1,0 +1,14 @@
+{
+    "vocabulary_size": 61,
+    "time_steps": 64,
+    "batch_size": 1000,
+    "n_classes": 2,
+    "learning_rate": 1.0,
+    "keep_probability": 0.8,
+    "num_layers": 1,
+    "hidden_units": 80,
+    "model": null,
+    "max_gradient": 10,
+    "init": 0.1,
+    "learning_rate_decay_factor": 0.8
+}

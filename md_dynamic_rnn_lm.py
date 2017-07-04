@@ -3,6 +3,8 @@ import random
 import numpy as np
 import logging
 import os
+import json
+
 class dynamicLM(object):
     def __init__(self, model_config):
         self.learning_rate = tf.Variable(
@@ -12,7 +14,7 @@ class dynamicLM(object):
 
         self.x = tf.placeholder(tf.int32, [None, model_config.time_steps], name = "x")
         self.y = tf.placeholder(tf.float32, [None, model_config.n_classes], name = "y")
-        self.x_lengths = tf.placeholder(tf.int32, [model_config.batch_size], name = "x_lengths")
+        self.x_lengths = tf.placeholder(tf.int32, [None], name = "x_lengths")
 
         self.embedding = tf.Variable(tf.random_uniform(
             (model_config.vocabulary_size, model_config.hidden_units), 
@@ -57,29 +59,31 @@ class dynamicLM(object):
 
         self.initialize = tf.initialize_all_variables()
         self.model_config = model_config
+        self.ckpt_num = 0
 
     def step(self, session, batch_x, batch_y, batch_x_lengths, forward_only = False):
         batch_x = batch_x.reshape([self.model_config.batch_size, self.model_config.time_steps])
         if forward_only: # predict
-            _, batch_loss, batch_accuracy, pred = session.run(
-                [self.pred, self.train_step, self.cost, self.accuracy], 
+            batch_loss, batch_accuracy = session.run(
+                [self.cost, self.accuracy], 
                 feed_dict={
-                    self.x_lenghts: batch_x_lengths,
+                    self.x_lengths: batch_x_lengths,
                     self.x: batch_x,
-                    self.y: batch_y
+                    self.y: batch_y,
                 })
-            return pred, batch_loss, batch_accuracy, 
+            return batch_loss, batch_accuracy, 
         else: # training
             _, batch_loss, batch_accuracy = session.run(
                 [self.train_step, self.cost, self.accuracy], 
                 feed_dict={
                     self.x_lengths: batch_x_lengths,
                     self.x: batch_x,
-                    self.y: batch_y
+                    self.y: batch_y,
                 })
-            return None, batch_loss, batch_accuracy
+            return batch_loss, batch_accuracy
 
-    def train(self, session, training_set, validation, exit_criteria, batch_per_epoch, directories):
+    def train(self, session, training_set, validation, exit_criteria, batch_per_epoch, 
+                directories, ckpt_per_epoch, restore_env = None):
         logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
                     datefmt='%m-%d %H:%M',
@@ -87,47 +91,75 @@ class dynamicLM(object):
                     filemode='w')
         logger = logging.getLogger("train")
         session.run(self.initialize)
+        self._write_model_parameters(directories)
+        logger.info("Save Model Parameters Successfully!")
+        print("Save Model Parameters Successfully!")
+        if restore_env == None:
+            session.run(self.initialize)
+            epoch = 0
+        else:
+            epoch = restore_env.epoch
+
         iteration = 0
         epoch = 0
         epoch_loss = 0.0
         epoch_accuracy = 0.0
 
+        if validation:
+            validation_X, validation_Y, validation_len = self.padding(validation, self.model_config.time_steps)
+
         # epoch contains batch_per_epoch batches
         while True:
             batch_x, batch_y, batch_x_lengths = self.get_batch(training_set)
-            _, batch_loss, batch_accuracy = self.step(session, batch_x, 
+            # print(batch_x)
+            batch_loss, batch_accuracy = self.step(session, batch_x, 
                 batch_y, batch_x_lengths, False)
             epoch_loss += batch_loss
             epoch_accuracy += batch_accuracy
-
+            print("Epoch %d, Iteration %d: batch loss %0.4f, batch accuracy %0.4f"
+                 % (epoch, iteration, batch_loss, batch_accuracy))
             if not iteration%batch_per_epoch:
                 epoch += 1 
                 epoch_accuracy /= float(batch_per_epoch)
                 epoch_loss /= float(batch_per_epoch)
                 logger.info("Epoch %d, Iteration %d: epoch loss %0.4f, epoch accuracy %0.4f"
                  % (epoch, iteration, epoch_loss, epoch_accuracy))
+                print("Epoch %d, Iteration %d: epoch loss %0.4f, epoch accuracy %0.4f"
+                 % (epoch, iteration, epoch_loss, epoch_accuracy))
                 epoch_loss = 0.0
                 epoch_accuracy = 0.0
 
-                if validation is not None:
-                    pred, validation_loss, validation_accuracy = \
-                        self.step(session, validation.x, validation.y, True)
-                    logger.info("Epoch %d, Iteration %d: validation accuracy %0.4f, validation loss" %
-                                (epoch, iteration, validation_accuracy, validation_loss))
+                if validation:
+                    validation_accuracy = 0.0
+                    validation_loss = 0.0
+                    t = int(validation_Y.shape[0]/self.model_config.batch_size)
+                    for i in range(t):
+                        validation_X_batch = validation_X[i*self.model_config.batch_size:(i+1)*self.model_config.batch_size]
+                        validation_Y_batch = validation_Y[i*self.model_config.batch_size:(i+1)*self.model_config.batch_size]
+                        validation_len_batch = validation_len[i*self.model_config.batch_size:(i+1)*self.model_config.batch_size]
 
-            if iteration > exit_criteria.max_iterations or epoch > exit_criteria.max_epochs:
+                        validation_loss_batch, validation_accuracy_batch = \
+                            self.step(session, validation_X_batch, validation_Y_batch, validation_len_batch, True)
+                        validation_accuracy += validation_accuracy_batch
+                        validation_loss += validation_loss_batch
+
+                    validation_accuracy /= t
+                    validation_loss /= t
+                    logger.info("Epoch %d, Iteration %d: validation accuracy %0.4f, validation loss %0.4f" %
+                                (epoch, iteration, validation_accuracy, validation_loss))
+                    print("Epoch %d, Iteration %d: validation accuracy %0.4f, validation loss %0.4f" %
+                                (epoch, iteration, validation_accuracy, validation_loss))
+                    
+
+            if epoch > exit_criteria.max_epochs:
                 break
             iteration += 1
 
         logger.info("Stop training at epoch %d, iteration %d" % (epoch, iteration))
-        if (validation is not None):
-            pred, validation_loss, validation_accuracy = self.step(session, validation.x, validation.y, True)
-            logger.info("Last epoch, last iteration: validation accuracy %0.4f, validation loss" %
-                            (validation_accuracy, validation_loss))
 
         model_filename = self._model_file(directories)
         tf.train.Saver().save(session, model_filename)
-        # self._write_model_parameters(directories)
+        
         logger.info("Saved model in %s " % directories)
 
     @staticmethod
@@ -136,6 +168,9 @@ class dynamicLM(object):
         ys = []
         xs_length = []
         for x, y in data:
+            if len(x) > times_steps:
+                print("len(x) > times_steps, len(x) = %d"%(len(x)))
+                print(x)
             pad_size = times_steps - len(x)
             xs_length.append(len(x))
             padded_xs.append(x + [PAD_ID] * pad_size)
@@ -148,12 +183,13 @@ class dynamicLM(object):
     def get_batch(self, data):
         batch_data = []
         # Get a random batch of inputs from data,
-        for _ in range(self.model_config.batch_size):
-            batch_data.append(random.choice(data))
+        for _ in range(self.model_config.batch_size - 1):
+            batch_data.append(random.choice(data[0]))
+        batch_data.append(random.choice(data[1]))
         # pad them if needed
         # will return padded x, y and x origin length
         return self.padding(batch_data, self.model_config.time_steps)
-    
+
     @classmethod
     def restore(cls, session, model_directory):
         """
